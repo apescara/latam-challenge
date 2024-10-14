@@ -47,6 +47,7 @@ def q1_memory(file_path: str) -> List[Tuple[datetime.date, str]]:
 
     data = spark.read.json(file_path)
     dataframe = get_dates_and_users(spark, data)
+    del data
 
     output = [
         tuple(row)
