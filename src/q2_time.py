@@ -1,40 +1,58 @@
 from typing import List, Tuple
 
 import emoji
-import json 
-import pandas as pd
+
+from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql.functions import col, udf, size, explode
+from pyspark.sql.types import StringType, ArrayType, StructType, StructField
+
+APP_NAME = "LATAM DE Challenge - Q2"
+
+
+def get_most_used_emojis(_spark: SparkSession, dataframe: DataFrame) -> DataFrame:
+    # define aux function to get the emojis from the text
+    get_emojis = udf(
+        lambda x: emoji.emoji_list(x),
+        ArrayType(
+            StructType(
+                [
+                    StructField("match_start", StringType(), True),
+                    StructField("match_end", StringType(), True),
+                    StructField("emoji", StringType(), True),
+                ]
+            )
+        ),
+    )
+
+    # Extract emojis from content ann just keep that
+    dataframe = dataframe.withColumn("emojis", get_emojis(col("content")))
+    dataframe = dataframe.select("emojis")
+
+    # Select only tweets with emojis and split
+    dataframe = dataframe.filter(size(dataframe.emojis) > 0)
+    dataframe = dataframe.withColumn("emojis", explode("emojis"))
+    dataframe = dataframe.select("emojis.*")
+
+    # Get most used ones
+    dataframe = (
+        dataframe.groupBy(col("emoji")).count().sort("count", ascending=False).limit(10)
+    )
+
+    return dataframe
+
 
 def q2_time(file_path: str) -> List[Tuple[str, int]]:
+    spark = SparkSession.builder.appName(APP_NAME).getOrCreate()
 
+    data = spark.read.json(file_path)
+    dataframe = get_most_used_emojis(spark, data)
 
-    def read_json(file_path):
-        data = []
-        with open(file_path, "r") as f:
-            # En el archivo hay un json por linea, hay que itearr y extrar cada uno
-            for line in f:
-                data.append(json.loads(line))
-            f.close()
+    del data
 
-        return data
+    output = [
+        tuple(row) for row in dataframe.select([col("emoji"), col("count")]).collect()
+    ]
 
-    # Leer json y pasar a DF
-    data = read_json(file_path=file_path)
-    data = pd.DataFrame.from_records(data)
+    spark.stop()
 
-    # Identifico los emojis, los separo y extraigo los 10 mas usados
-    emoji_usage = data.content.apply(lambda x: emoji.emoji_list(x)).to_frame()
-    concatenation = emoji_usage[emoji_usage.content.str.len() != 0].content.sum()
-    top_emojis = (
-        pd.DataFrame.from_records(concatenation)[["emoji", "match_start"]]
-        .groupby("emoji")
-        .count()
-        .reset_index()
-        .sort_values(by="match_start", ascending=False)
-        .head(10)
-    )
-        
-    out = []
-    for index, row in top_emojis.reset_index().iterrows():
-        out.append((row.iloc[1], row.iloc[2]))
-
-    return out
+    return output
