@@ -3,3 +3,4 @@ pandas
 pyspark
 pendulum
 line_profiler
+emoji
